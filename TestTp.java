@@ -1,49 +1,44 @@
 import java.util.*;
-import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import jdk.management.jfr.RemoteRecordingStream;
-
 //------------------------------ Interpreteur ------------------------------
 class Interpreteur {
-    Map<String,Double> table_des_symboles = new HashMap<String,Double>();
+    static Map<String,Double> table_des_symboles = new HashMap<String,Double>();
     private LigneDeCommande ligne_de_commande;
 
-    public void set_ligne_de_commande(String s) throws InvalidCommandException{
+    public void set_ligne_de_commande(String s) throws InvalidCommandException,UndeclaredVariableException,
+	InvalidVariableNameException,ParentheseFermanteException,ParentheseOuvranteException,InvalidExpressionException{
         ligne_de_commande = new LigneDeCommande(s);
     }
 
     public void interpreter(){
-		Double valeur = ligne_de_commande.getExpression().getValeur();
-        if(ligne_de_commande.getType() == "let"){
-			String nom = ligne_de_commande.getVariable().getNom();
-			table_des_symboles.put(nom, valeur);
+        if(ligne_de_commande.getVariable() != null){
+			Variable variable = ligne_de_commande.getVariable();
+			table_des_symboles.put(variable.getNom(), variable.getValeur());
 			System.out.println("Ok");
 		}else{
-			System.out.println("la valeur est : " + valeur);
+			Double valeur = ligne_de_commande.getExpression().getValeur();
+			System.out.println("La valeur est : " + valeur);
 		}
     }
 }
 //------------------------------ LigneDeCommande ------------------------------
-class InvalidCommandException extends Exception{}
 class LigneDeCommande{
-
-	private String type;
     private Variable variable;
     private Expression expression;
 
-    public LigneDeCommande(String s) throws InvalidCommandException{
+    public LigneDeCommande(String s) throws InvalidCommandException,UndeclaredVariableException,
+	InvalidVariableNameException,ParentheseFermanteException,ParentheseOuvranteException,InvalidExpressionException{
 		if(LigneDeCommande.valide(s)){
-			String decomp[] = s.split("//s",2);
-			type = decomp[0];
-			String secondPart = decomp[1];
-			if(type == "let"){
+			String decomp[] = s.split("\\s",2);
+			String type = decomp[0];
+			String secondPart = decomp[1].replaceAll("\\s", "");
+			if(type.compareTo("let") == 0){
 				decomp = secondPart.split("=",2);
-				variable = new Variable(decomp[0]);
 				expression = new Expression(decomp[1]);
 				expression.evaluer();
+				variable = new Variable(decomp[0],expression.getValeur());
 			}else{
 				expression = new Expression(secondPart);
 				expression.evaluer();
@@ -52,19 +47,13 @@ class LigneDeCommande{
 			throw new InvalidCommandException();
 		}
     }
+
 	static boolean valide(String s){
-		Pattern let_pattern = Pattern.compile("^let(\\s+)(\\w+)(\\s*)=(\\s*)((\\w|[\\(\\)\\^\\*\\+-/])+)$");
-		Pattern print_pattern = Pattern.compile("^print(\\s+)((\\w|[\\(\\)\\*\\+-/])+)$");
+		Pattern let_pattern = Pattern.compile("^let(\\s+)(\\w+)(\\s*)=(\\s*)((\\w|[\\(\\)\\^\\*\\+-/]|\\s)+)$");
+		Pattern print_pattern = Pattern.compile("^print(\\s+)((\\w|[\\(\\)\\^\\*\\+-/]|\\s)+)$");
 		Matcher let_matcher = let_pattern.matcher(s);
 		Matcher print_matcher = print_pattern.matcher(s);
-		if(let_matcher.find() || print_matcher.find()){
-			return true;
-		}else{
-			return false;
-		}
-	}
-	public String getType(){
-		return type;
+		return let_matcher.find() || print_matcher.find();
 	}
 	public Variable getVariable(){
 		return variable;
@@ -79,194 +68,314 @@ class Expression{
     private Map<String,Terme> termes = new HashMap<String,Terme>();
     private double valeur;
 
-    public Expression(String s){
-		String list[] = s.split("((?<=\\+)|(?=\\+)|(?<=-)|(?=-))");
-		String reg;
-		Terme terme;
-		int i = 0;
-		while( i< list.length ){
-			if(! Expression.valide(list[i])){
-				reg = list[i];
-				while(!Expression.valide(reg)){
-				i++;	
-				reg = reg + list[i];
-				}
-				decomposition.add(reg);
-				terme = new Terme(reg);
-				terme.evaluer();
-				termes.put(reg, terme);
-			}else{
-				decomposition.add(list[i]);
-				if(list[i] != "+" || list[i] != "-"){
-					terme = new Terme(list[i]);
+    public Expression(String s) throws UndeclaredVariableException,
+	ParentheseFermanteException,ParentheseOuvranteException,InvalidExpressionException{
+		if(Expression.checkParenthese(s) > 0){
+			throw new ParentheseFermanteException();
+		}else if(Expression.checkParenthese(s) < 0){
+			throw new ParentheseOuvranteException();
+		}
+		else{
+			String list[] = s.split("((?<=\\+)|(?=\\+)|(?<=-)|(?=-))");
+			String reg;
+			Terme terme;
+			int i = 0;
+			boolean operateur = false;
+			while( i< list.length ){
+				if( Expression.checkParenthese(list[i]) != 0){
+					operateur = false;
+					reg = list[i];
+					while(Expression.checkParenthese(reg) != 0){
+					i++;	
+					reg = reg + list[i];
+					}
+					decomposition.add(reg);
+					terme = new Terme(reg);
 					terme.evaluer();
-					termes.put(list[i], terme);
+					termes.put(reg, terme);
+				}else{
+					decomposition.add(list[i]);
+					if(list[i].compareTo("+") != 0 && list[i].compareTo("-") != 0){
+						operateur = false;
+						terme = new Terme(list[i]);
+						terme.evaluer();
+						termes.put(list[i], terme);
+					}else{
+						if(operateur == true || i+1 == list.length){
+							throw new InvalidExpressionException();
+						}
+						operateur = true;
+					}
 				}
+				i++;
 			}
-			i++;
 		}
     }
+
     public void evaluer(){
 		String terme;
 		Double valeur = 0.0D;
 		int counter = 0;
 		while(counter < decomposition.size()) { 		      
 			terme = decomposition.get(counter);
-			if(terme == "-"){
-				valeur =- termes.get(decomposition.get(counter+1)).getValeur();
-				counter = +2;
-			}else if(terme == "+"){
-				valeur =+ termes.get(decomposition.get(counter+1)).getValeur();
-				counter = +2;
+
+			if(terme.compareTo("-") == 0){
+				valeur = valeur - termes.get(decomposition.get(counter+1)).getValeur();
+				counter = counter + 2;
+			}else if(terme.compareTo("+") == 0){
+				valeur = valeur + termes.get(decomposition.get(counter+1)).getValeur();
+				counter = counter + 2;
 			}else{
-				valeur =+ termes.get(terme).getValeur();
-				counter = +1;
+				valeur = valeur + termes.get(terme).getValeur();
+				counter = counter + 1;
 			}
 		}
 		this.valeur = valeur;
     }
 
-    public static boolean valide(String s){
+    public static int checkParenthese(String s){
 		int open_count = s.length() - s.replace("(", "").length();
 		int close_count = s.length() - s.replace(")", "").length();
-		if(open_count != close_count){
-			return false;
+		if( open_count == close_count ){
+			return 0;
+		}else if(open_count > close_count){
+			return 1;
 		}else{
-			return true;
+			return -1;
 		}
     }
+
 	public Double getValeur(){
 		return valeur;
 	}
-	public List<String> getList(){
-		return decomposition;
-	}
 }
-//------------------------------ Termes ------------------------------
+//------------------------------ Terme ------------------------------
 class Terme {
-	private List<String> decomposition;
-	private Map<String, Facteur> operandes;
+	private List<String> decomposition = new ArrayList<String>();
+	private Map<String, Facteur> facteurs = new HashMap<String, Facteur>();
 	private double valeur;
 
-	public Terme(String terme) {
-		//le constructeur d'un terme
+	public Terme(String s) throws UndeclaredVariableException,ParentheseFermanteException
+	,ParentheseOuvranteException,InvalidExpressionException{
+		String list[] = s.split("((?<=\\*)|(?=\\*)|(?<=/)|(?=/))");
+		String reg;
+		Facteur facteur;
+		int i = 0;
+		boolean operateur = true;
+		while (i < list.length ) {
+			if ( Expression.checkParenthese(list[i]) != 0) {
+				reg = list[i];
+				while( Expression.checkParenthese(reg) != 0){
+					i++;	
+					reg = reg + list[i];
+				}
+				operateur = false;
+				decomposition.add(reg);
+				facteur = new Facteur(reg);
+				facteur.evaluer();
+				facteurs.put(reg, facteur);
+			} else {
+				decomposition.add(list[i]);
+				if (list[i].compareTo("*") != 0 && list[i].compareTo("/") != 0) {
+					operateur = false;
+					facteur = new Facteur(list[i]);
+					facteur.evaluer();
+					facteurs.put(list[i], facteur);
+				}else{
+					if( operateur == true || i+1 == list.length){
+						throw new InvalidExpressionException();
+					}
+					operateur = true;
+				}
+			}
+			i++;
+		}
 	}
 
-	//les getters
-	public List<String> getDecomposition() {
-		return this.decomposition;
-	}
-	public Map<String, Facteur> getOperandes() {
-		return this.operandes;
-	}
+	public void evaluer(){
+		String facteur;
+		Double valeur = 1.0D;
+		int counter = 0;
+		while(counter < decomposition.size()) { 		      
+			facteur = decomposition.get(counter);
+			if(facteur.compareTo("/") == 0){
+				valeur = valeur / facteurs.get(decomposition.get(counter + 1)).getValeur();
+				counter = counter + 2;
+			}else if(facteur.compareTo("*") == 0){
+				valeur = valeur * facteurs.get(decomposition.get(counter + 1)).getValeur();
+				counter = counter + 2;
+			}else{
+				valeur = valeur * facteurs.get(facteur).getValeur();
+				counter = counter + 1;
+			}
+		}
+		this.valeur = valeur;
+    }
+
 	public double getValeur() {
 		return this.valeur;
 	}
-	public void evaluer(){}
-	
-	//les setters
-	public void setDecomposition(List<String> decomposition) {
-		this.decomposition = decomposition;
-	}
-	public void setOperandes(Map<String, Facteur> operandes) {
-		this.operandes = operandes;
-	}
-	public void setValeur(double valeur) {
-		this.valeur = valeur;
-	}
 }
-
-//la classe des facteurs
+//------------------------------ Facteur ------------------------------
 class Facteur {
-	private List<String> decomposition;
-	private HashMap<String, Element> operandes;
+	private List<String> decomposition = new ArrayList<String>();
+	private HashMap<String, Element> elements = new HashMap<String, Element>();
 	private double valeur;
 	
-	public Facteur(String facteur) {
+	public Facteur(String s) throws UndeclaredVariableException,ParentheseFermanteException
+	,ParentheseOuvranteException,InvalidExpressionException{
+		String list[] = s.split("((?<=\\^)|(?=\\^))");
+		String reg;
+		Element element;
+		int i = 0;
+		boolean operateur = true;
+		while( i< list.length ){
+			if ( Expression.checkParenthese(list[i]) != 0){
+				reg = list[i];
+				while( Expression.checkParenthese(reg) != 0){
+					i++;	
+					reg = reg + list[i];
+				}
+				operateur = false;
+				decomposition.add(reg);
+				element = new Element(reg);
+				element.evaluer();
+				elements.put(reg, element);
+			}else{
+				decomposition.add(list[i]);
+				if (list[i].compareTo("^") != 0){
+					operateur = false;
+					element = new Element(list[i]);
+					element.evaluer();
+					elements.put(list[i], element);
+				}else{
+					if( operateur == true || i+1 == list.length ){
+						throw new InvalidExpressionException();
+					}
+					operateur = true;
+				}
+			}
+			i++;
+		}
+    }
+
+	public void evaluer(){
+		String element;
+		Double valeur = 1.0D;
+		int counter = 0;
+		while(counter < decomposition.size()) { 		      
+			element = decomposition.get(counter);
+			if(element.compareTo("^") == 0){
+				valeur = Math.pow(valeur,elements.get(decomposition.get(counter+1)).getValeur());
+				counter = counter + 2;
+			}else{
+				valeur = Math.pow(elements.get(element).getValeur(),valeur);
+				counter = counter + 1;
+			}
+		}
+		this.valeur = valeur;
 	}
 
-	//les getters
-	public List<String> getDecomposition() {
-		return this.decomposition;
-	}
-	public HashMap<String, Element> getOperandes() {
-		return this.operandes;
-	}
 	public double getValeur() {
 		return this.valeur;
 	}
-	
-	//les setters
-	public void setDecomposition(List<String> decomposition) {
-		this.decomposition = decomposition;
-	}
-	public void setOperandes(HashMap<String, Element> operandes) {
-		this.operandes = operandes;
-	}
-	public void setValeur() {
-		this.valeur = valeur;
-	}
 }
-
-//la classe des elements
+//------------------------------ Element ------------------------------
 class Element {
-	private List<String> decomposition;
-	private Map<String, Variable> operandes;
-	private double valeur;
-
-	public Element(String element) {
-		//le constructeur d'un element
+	private Variable variable;
+	private Expression expression;
+	private FonctionStandard fonction;
+	private Nombre nombre;
+	private Double valeur;
+	
+	public Element(String element) throws UndeclaredVariableException,
+	ParentheseFermanteException,ParentheseOuvranteException,InvalidExpressionException{	
+		if(Nombre.valide(element)){
+			nombre = new Nombre(element);
+		}else if (Variable.valide(element)){
+			variable = new Variable(element);
+		}else{
+			Pattern expression_pattern = Pattern.compile("^\\(((\\w|[\\(\\)\\^\\*\\+-/])+)\\)$");
+			Pattern fonction_pattern = Pattern.compile("^(sin|cos|tab|abs|sqrt|log)\\(((\\w|[\\(\\)\\^\\*\\+-/])+)\\)$");
+			Matcher expression_matcher = expression_pattern.matcher(element);
+			Matcher fonction_matcher = fonction_pattern.matcher(element);
+			if(expression_matcher.find()){
+				expression = new Expression(expression_matcher.group(1));
+				expression.evaluer();
+			}else if(fonction_matcher.find()){
+				fonction = FonctionStandard.valueOf(fonction_matcher.group(1).toUpperCase());
+				expression = new Expression(fonction_matcher.group(2));
+				expression.evaluer();
+			}else{
+				throw new InvalidExpressionException();
+			}
+		}
 	}
 
-	//les getters
-	public List<String> getDecomposition() {
-		return this.decomposition;
+	public void evaluer(){
+		if(this.nombre != null){
+			this.valeur = nombre.getValeur();
+		}else if(this.variable != null){
+			this.valeur = variable.getValeur();
+		}else if(this.fonction==null && this.expression!= null){
+			this.valeur = expression.getValeur();
+		}else{
+			if(this.fonction == FonctionStandard.COS || this.fonction == FonctionStandard.SIN || this.fonction == FonctionStandard.TAN ){
+				this.valeur = fonction.call(Math.toRadians(expression.getValeur()));
+			}else{
+				this.valeur = fonction.call(expression.getValeur());
+			}
+		}
 	}
-	public Map<String, Variable> getOperandes() {
-		return this.operandes;
-	}
-	public double getValeur() {
+
+	public Double getValeur(){
 		return this.valeur;
 	}
-	
-	//les setters
-	public void setDecomposition(List<String> decomposition) {
-		this.decomposition = decomposition;
-	}
-	public void setOperandes(Map<String, Variable> operandes) {
-		this.operandes = operandes;
-	}
-	public void setValeur() {
-		this.valeur = valeur;
-	}
 }
-//la classe des variables
+////------------------------------ Variable ------------------------------
 class Variable {
     private String nom;
 	private double valeur;
 
-	public Variable(String nom, double valeur) {
-        this.nom = nom;
-		this.valeur = valeur;
+	public Variable(String nom, double valeur) throws InvalidVariableNameException {
+		//ce constructeur est utilisé lors de la commande let
+		if( Variable.valide(nom)){
+        	this.nom = nom;
+			this.valeur = valeur;}
+		else{
+			throw new InvalidVariableNameException();
+		}
 	}
-    public Variable(String nom){
-        this.nom = nom;
+
+    public Variable(String nom) throws UndeclaredVariableException{
+		//ce constructeur est utilisé lors de l'évaluation de l'expression
+		this.nom = nom;
+		if(Interpreteur.table_des_symboles.get(nom) != null){
+		this.valeur = Interpreteur.table_des_symboles.get(nom);}
+		else{
+			System.out.print("Erreur : " + nom + " ");
+			throw new UndeclaredVariableException();
+		}
     }
-    public String getNom(){
+
+	public static boolean valide(String s){
+		Pattern variable_pattern1 = Pattern.compile("^[a-z](\\w*)$");
+		Pattern variable_pattern2 = Pattern.compile("^(let|print|sin|cos|tan|abs|sqrt|log)$");
+		Matcher variable_matcher1 = variable_pattern1.matcher(s);
+		Matcher variable_matcher2 = variable_pattern2.matcher(s);
+		return variable_matcher1.find() && !variable_matcher2.find();
+	}
+
+	public String getNom(){
         return this.nom;
     }
-    public void setNom(String nom){
-        this.nom = nom;
-    }
+
 	public double getValeur() {
 		return this.valeur;
 	}
-	public void setValeur(Double valeur) {
-		this.valeur = valeur;
-	}
 }
 //------------------------------ FunctionStandard ------------------------------
-enum FunctionStandard {
+enum FonctionStandard {
     SIN(java.lang.Math::sin),
     COS(java.lang.Math::cos),
     TAN(java.lang.Math::tan),
@@ -276,7 +385,7 @@ enum FunctionStandard {
 
     private UnaryOperator<Double> function;
 
-    private FunctionStandard(UnaryOperator<Double> function) {
+    private FonctionStandard(UnaryOperator<Double> function) {
         this.function = function;
     }
 
@@ -290,15 +399,63 @@ class Nombre {
     public Nombre(String s) throws NumberFormatException{
         valeur = Double.parseDouble(s);
     }
+	public static boolean valide(String s){
+		Pattern nombre_pattern = Pattern.compile("^(\\d)+(\\.)?(\\d)*$");
+		Matcher nombre_matcher = nombre_pattern.matcher(s);
+		return nombre_matcher.find();
+	}
+	public double getValeur(){
+		return this.valeur;
+	}
 }
+//------------------------------ Les exceptions ------------------------------
+class InvalidCommandException extends Exception{}
+class InvalidVariableNameException extends Exception{}
+class UndeclaredVariableException extends Exception{
+	String nom;
+}
+class ParentheseFermanteException extends Exception{}
+class ParentheseOuvranteException extends Exception{}
+class InvalidExpressionException extends Exception{}
 
 public class TestTp {
     public static void main(String[] args) {
-		String s = "sin(3-(a/b)+3)-cos(3*(r+5))*(log(2*(x+y)))";
-		Expression ex = new Expression(s);
-		List<String> list = ex.getList();
-		for (String l : list){
-			System.out.println(l);
-		}
+		System.out.println("Entrez vos commandes. Tapez end pour terminer votre programme.\n");
+		System.out.println("Une commande doit etre de la forme\n");
+		System.out.println("let <variable> = <expression>\nou\nprint <expression>\n");
+		Interpreteur interpreteur = new Interpreteur();
+		Scanner scanner = new Scanner(System.in);
+		String input = "";
+		while( true ){
+			System.out.print(">  ");
+			input = scanner.nextLine();
+			if (input.compareTo("end") == 0){
+				scanner.close();
+				System.out.print("fin du programme");
+				break;
+			}
+			try{
+			interpreteur.set_ligne_de_commande(input);
+			interpreteur.interpreter();
+			}
+			catch(InvalidCommandException e){
+				System.out.println("Erreur : commande invalide");
+			}
+			catch(InvalidVariableNameException e){
+				System.out.println("Erreur : nom de variable invalide");
+			}
+			catch(UndeclaredVariableException e){
+				System.out.println("variable non declaree");
+			}
+			catch(ParentheseOuvranteException e){
+				System.out.println("Erreur : parenthese ouvrante manquante");
+			}
+			catch(ParentheseFermanteException e){
+				System.out.println("Erreur : parenthese fermante manquante");
+			}
+			catch(InvalidExpressionException e){
+				System.out.println("Erreur : Expression erronee");
+			}
 		}
     }
+}
